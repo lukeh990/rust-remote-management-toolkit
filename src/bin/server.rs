@@ -1,23 +1,16 @@
-use futures_util::{FutureExt, StreamExt};
 use warp::Filter;
+use chrono::prelude::*;
+use rrss_lib::bug::Bug;
 
 #[tokio::main]
 async fn main() {
-    let routes = warp::path("echo")
-        // The `ws()` filter will prepare the Websocket handshake
-            .and(warp::ws())
-        .map(|ws: warp::ws::Ws| {
-            // And then our closure will be called when it completes...
-            ws.on_upgrade(|websocket| {
-                // Just echo all messages back...
-                let (tx, rx) = websocket.split();
-                rx.forward(tx).map(|result| {
-                    if let Err(e) = result {
-                        eprintln!("websocket error: {:?}", e);
-                    }
-                })
-            })
+    let bug = warp::post()
+        .and(warp::path("bug"))
+        .and(warp::body::json())
+        .map(|body: Bug| {
+            println!("{} | {1} | {2}", body.machine, Utc::now(), body.body);
+            warp::reply()
         });
 
-    warp::serve(routes).run(([127,0,0,1], 3030)).await;
+    warp::serve(bug).run(([0, 0, 0, 0], 9000)).await
 }
