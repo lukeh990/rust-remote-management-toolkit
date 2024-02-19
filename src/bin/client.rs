@@ -1,3 +1,5 @@
+extern crate rrss_lib;
+
 use std::error;
 use rrss_lib::Bug;
 

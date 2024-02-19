@@ -1,3 +1,5 @@
+extern crate rrss_lib;
+
 use warp::Filter;
 use chrono::prelude::*;
 use rrss_lib::Bug;
