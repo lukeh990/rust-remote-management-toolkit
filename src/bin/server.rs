@@ -1,6 +1,6 @@
 use warp::Filter;
 use chrono::prelude::*;
-use rrss_lib::bug::Bug;
+use rrss_lib::Bug;
 
 #[tokio::main]
 async fn main() {

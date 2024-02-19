@@ -1,5 +1,5 @@
 use std::error;
-use rrss_lib::bug::Bug;
+use rrss_lib::Bug;
 
 type Result<T> = std::result::Result<T, Box<dyn error::Error>>;
 
