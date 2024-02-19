@@ -29,5 +29,7 @@ WORKDIR /rust-reverse-shell-system
 # copy the build artifact from the build stage
 COPY --from=build /rust-reverse-shell-system/target/release/server .
 
+EXPOSE 9000
+
 # set the startup command to run your binary
 CMD ["./server"]
