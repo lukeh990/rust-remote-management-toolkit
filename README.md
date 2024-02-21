@@ -11,4 +11,4 @@ to use a tool like netcat to open a shell and forward it to the
 management server, which will in turn forward that again to the Administrator
 
 See diagram:  
-![System Diagram](static/diagram.png)
+![System Diagram](static/diagram.png?)
