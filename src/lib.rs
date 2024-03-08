@@ -1,7 +1,1 @@
-use serde::{Serialize, Deserialize};
-
-#[derive(Serialize, Deserialize)]
-pub struct Bug {
-    pub machine: String,
-    pub body: String
-}
+pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
