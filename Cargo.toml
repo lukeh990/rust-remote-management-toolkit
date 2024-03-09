@@ -12,4 +12,4 @@ path = "src/lib.rs"
 [dependencies]
 tokio = { version = "1.36.0", features = ["full"] }
 bytes = "1.5.0"
-async-recursion = "1.0.5"
+uuid = { version = "1.7.0", features = ["v4"] }
