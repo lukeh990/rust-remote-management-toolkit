@@ -1,7 +1,6 @@
-use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::time::sleep;
+
 use rrmt_lib::Result;
 
 #[tokio::main]
@@ -14,7 +13,7 @@ async fn main() -> Result<()> {
         let (socket, _) = listener.accept().await?;
         tokio::spawn(async move {
             if let Err(e) = process(socket).await {
-                println!("Error: {}", e.to_string());
+                println!("Error: {}", e);
             }
         });
     }
@@ -22,7 +21,7 @@ async fn main() -> Result<()> {
 
 async fn process(mut socket: TcpStream) -> Result<()> {
     let remote_ip = socket.peer_addr()?;
-    println!("connection from: {}", remote_ip.ip().to_string());
+    println!("connection from: {}", remote_ip.ip());
 
     let rrmt_type = determine_type(&mut socket).await?;
     println!("{:X?}", rrmt_type);
