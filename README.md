@@ -32,25 +32,27 @@ The RRMT Protocol is a simple binary protocol designed specifically to maintain
 an open connection with the Management Server and to instruct the remote clients 
 on how to start the remote shell. 
 
-### Packet Makeup
-
+### Frame Fields
+#### Header
 - Type (1 Byte)
-- Length (2 Bytes)
+- Length (2 Bytes) (Big Endian)
+#### Data
 - Data (0 - 65,536 Bytes)
 
-### Payload Type
+### Frame Types
 The message type is encoded in a single byte. The following message types are 
 im use:
-- `0x01` - ACK
-- `0x02` - Authorize
-- `0x03` - Revoke
-- `0x04` - Provision
-- `0x05` - Ping
-- `0x06` - Pong
-- `0x07` - Execute
-- `0x08` - Result
-- `0x09` - Reauthorize
-- `0x0A` - Error
+- `0x1` - ACK
+- `0x2` - Authorize
+- `0x3` - Revoke
+- `0x4` - Provision
+- `0x5` - Ping
+- `0x6` - Pong
+- `0x7` - Execute
+- `0x8` - Result
+- `0x9` - Reauthorize
+- `0xA` - Denied
+- `0xB` - Error
 
 ### Authorization Stage
 This is the first step any host must take is requesting authorization using 
@@ -61,8 +63,8 @@ known by the server beforehand. The payload will look something like this:
 ```
 - `0x02` - Type (Authorize)
 - `0x0010` - Length (16)
-- `0xA1...09` - Payload (UUID V4 in binary)
+- `0xA1...09` - Data (UUID V4 in binary)
 
 If the server validates the token, response will contain a type of provision (`0x04`) 
 with information. If the server is unable to validate the token the response 
-will be of type Error (`0x0A`)
+will be of type Denied (`0xA`)

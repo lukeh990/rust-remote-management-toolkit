@@ -3,9 +3,10 @@ use std::ops::MulAssign;
 use std::str::FromStr;
 use std::time::Duration;
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio::time::sleep;
+use uuid::Uuid;
 
 use rrmt_lib::Result;
 
@@ -22,11 +23,11 @@ async fn main() -> Result<()> {
     let addr = SocketAddr::from_str("127.0.0.1:3000")?;
     let mut stream = establish_stream_backoff(addr).await;
 
-    stream.write_all(&[0x01, 0x02, 0x03, 0x04]).await?;
-
-    let mut buffer = [0; 1];
-    let n = stream.read(&mut buffer).await?;
-    println!("Received: {:X?}", &buffer[..n]);
+    let token = Uuid::from_str("c10afcef-0d32-4b6a-a870-54318fdcef18")?;
+    let mut to_send = vec![0x02, 0x00, 0x10];
+    to_send.extend_from_slice(token.as_bytes());
+    
+    stream.write_all(&to_send).await?;
 
     Ok(())
 }

@@ -2,11 +2,10 @@ use std::collections::HashSet;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use uuid::Uuid;
 
-use rrmt_lib::Result;
+use rrmt_lib::{frame, Result};
 
 type SharedTokenList = Arc<Mutex<HashSet<Uuid>>>;
 
@@ -36,26 +35,15 @@ async fn main() -> Result<()> {
     }
 }
 
-async fn process(mut socket: TcpStream, shared_token_list: SharedTokenList) -> Result<()> {
-    let rrmt_type = determine_type(&mut socket).await?;
-    println!("{:X?}", rrmt_type);
+async fn process(socket: TcpStream, shared_token_list: SharedTokenList) -> Result<()> {
 
+    frame::read_frame(socket).await?;
+    
     {
         let token_list = shared_token_list.lock().unwrap_or_else(|e| e.into_inner());
 
         let _ = token_list.contains(&Uuid::from_str("c10afcef-0d32-4b6a-a870-54318fdcef18")?);
     }
     
-    let buffer = &[0x0A];
-    socket.write_all(buffer).await?;
-
     Ok(())
-}
-
-async fn determine_type(socket: &mut TcpStream) -> Result<u8> {
-    let mut buffer = [0; 1];
-
-    socket.read_exact(&mut buffer[..]).await?;
-
-    Ok(buffer[0])
 }
