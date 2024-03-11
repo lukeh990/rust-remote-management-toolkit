@@ -37,7 +37,8 @@ async fn main() -> Result<()> {
 
 async fn process(socket: TcpStream, shared_token_list: SharedTokenList) -> Result<()> {
 
-    frame::read_frame(socket).await?;
+    let frame = frame::read_frame(socket).await?;
+    println!("{:?}", frame);
     
     {
         let token_list = shared_token_list.lock().unwrap_or_else(|e| e.into_inner());
