@@ -1,11 +1,26 @@
+/*
+server.rs
+The server manages remote devices and exposes an API to the CLI.
+
+To-Do:
+- [X] Get connection from remote
+- [ ] Authorization flow
+- [ ] Shared state for remote list
+- [ ] Find way to persist valid tokens
+- [ ] Ping/Pong Cycle
+- [ ] Execute commands
+- [ ] HTTP API for CLI
+ */
+
 use std::collections::HashSet;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use tokio::net::{TcpListener, TcpStream};
 use uuid::Uuid;
+use rrmt_lib::frame::{read_frame, RRMTFrame, write_frame};
 
-use rrmt_lib::{frame, Result};
+use rrmt_lib::Result;
 
 type SharedTokenList = Arc<Mutex<HashSet<Uuid>>>;
 
@@ -20,7 +35,7 @@ async fn main() -> Result<()> {
 
     let mut token_list = HashSet::new();
     token_list.insert(token);
-    
+
     let shared_token_list: SharedTokenList = Arc::new(Mutex::new(token_list));
 
     loop {
@@ -29,22 +44,17 @@ async fn main() -> Result<()> {
 
         tokio::spawn(async move {
             if let Err(e) = process(socket, shared_token_list).await {
-                println!("Error: {}", e);
+                println!("Failure: {}", e);
             }
         });
     }
 }
 
-async fn process(socket: TcpStream, shared_token_list: SharedTokenList) -> Result<()> {
+async fn process(mut socket: TcpStream, shared_token_list: SharedTokenList) -> Result<()> {
+    let frame = match read_frame(&mut socket).await {
+        Ok(frame) => frame,
+        Err(e) => return write_frame(&mut socket, RRMTFrame::Error(e.to_string())).await,
+    };
 
-    let frame = frame::read_frame(socket).await?;
-    println!("{:?}", frame);
-    
-    {
-        let token_list = shared_token_list.lock().unwrap_or_else(|e| e.into_inner());
-
-        let _ = token_list.contains(&Uuid::from_str("c10afcef-0d32-4b6a-a870-54318fdcef18")?);
-    }
-    
     Ok(())
 }

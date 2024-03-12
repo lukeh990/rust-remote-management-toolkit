@@ -1,3 +1,17 @@
+/*
+remote-client.rs
+This file houses the remote client. It authenticates with the server and runs remote commands.
+
+To-Do:
+- [X] Connect to server
+- [X] Send frames between server and remote
+- [ ] Store persistent config
+- [ ] Authenticate with remote server
+- [ ] If already provisioned reauthenticate
+- [ ] Ping/Pong Cycle
+- [ ] Execute commands
+ */
+
 use std::net::SocketAddr;
 use std::ops::MulAssign;
 use std::str::FromStr;
@@ -7,25 +21,26 @@ use tokio::net::TcpStream;
 use tokio::time::sleep;
 use uuid::Uuid;
 
-use rrmt_lib::frame::{RRMTFrame, write_frame};
+use rrmt_lib::frame::{read_frame, RRMTFrame, write_frame};
 use rrmt_lib::Result;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     // Setup debug variable
-/*    let mut debug = false;
-    #[cfg(debug_assertions)]
-    {
-        debug = true;
-    }
-*/
+    /*    let mut debug = false;
+        #[cfg(debug_assertions)]
+        {
+            debug = true;
+        }
+    */
 
     let addr = SocketAddr::from_str("127.0.0.1:3000")?;
-    let stream = establish_stream_backoff(addr).await;
+    let mut stream = establish_stream_backoff(addr).await;
 
     let token = Uuid::from_str("c10afcef-0d32-4b6a-a870-54318fdcef18")?;
 
-    write_frame(stream, RRMTFrame::Authorize(token)).await?;
+    write_frame(&mut stream, RRMTFrame::Authorize(token)).await?;
+    println!("{:?}", read_frame(&mut stream).await?);
 
     Ok(())
 }
@@ -37,12 +52,12 @@ async fn establish_stream_backoff(addr: SocketAddr) -> TcpStream {
         match TcpStream::connect(addr).await {
             Ok(stream) => {
                 return stream;
-            },
+            }
             Err(_) => {
                 backoff.mul_assign(2);
                 println!("Failed to connect retrying after {} seconds", backoff.as_secs());
                 continue;
-            },
+            }
         };
     }
 }
