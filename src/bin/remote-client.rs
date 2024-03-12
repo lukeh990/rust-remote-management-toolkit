@@ -40,7 +40,8 @@ async fn main() -> Result<()> {
     let token = Uuid::from_str("c10afcef-0d32-4b6a-a870-54318fdcef18")?;
 
     write_frame(&mut stream, RRMTFrame::Authorize(token)).await?;
-    println!("{:?}", read_frame(&mut stream).await?);
+    let frame = read_frame(&mut stream).await?;
+    println!("Result: {:?}", frame);
 
     Ok(())
 }
@@ -55,7 +56,10 @@ async fn establish_stream_backoff(addr: SocketAddr) -> TcpStream {
             }
             Err(_) => {
                 backoff.mul_assign(2);
-                println!("Failed to connect retrying after {} seconds", backoff.as_secs());
+                println!(
+                    "Failed to connect retrying after {} seconds",
+                    backoff.as_secs()
+                );
                 continue;
             }
         };
