@@ -51,23 +51,29 @@ on how to start the remote shell.
 The message type is encoded in a single byte. The following message types are
 im use:
 
-- `0x1` - ACK (Server <-> Client)
-- `0x2` - Authorize (Server <-- Client)
-- `0x3` - Revoke (Server --> Client)
-- `0x4` - Provision (Server --> Client)
-- `0x5` - Ping (Server --> Client)
-- `0x6` - Pong (Server <-- Client)
-- `0x7` - Execute (Server --> Client)
-- `0x8` - Result (Server <-- Client)
-- `0x9` - Reauthorize (Server <-- Client)
-- `0xA` - Denied (Server --> Client)
-- `0xB` - Error (Server <-> Client)
+- `0x01` - Authorize (Server <-- Client)
+- `0x02` - Denied (Server --> Client)
+- `0x03` - Accepted (Server --> Client)
+- `0x04` - Ping (Server --> Client)
+- `0x05` - Pong (Server <-- Client)
+- `0x06` - Error (Server <-> Client)
+- `0x07` - Execute (Server --> Client)
+- `0x08` - Result (Server <-- Client)
+- `0x09` - ACK (Server <-> Client)
+
+### Error Types
+
+- `0x01` - Length Mismatch
+- `0x02` - Server Error
+- `0x03` - Format Error
+- `0x04` - Execute Error
 
 ### Authorization Stage
 
-This is the first step any host must take is requesting authorization using
-a token. The token will be in the form of a RFC4122 v4 UUID that will be
-known by the server beforehand. The payload will look something like this:
+The client will send an authorization frame requesting authorization. This frame will include a unique machine ID if the
+server has already saved the UUID it will respond with an accepted frame (`0x03`). If the UUID is unknown the server
+will
+respond with a denied frame (`0x02`).
 
 ```
 02 | 00 10 | A1 B6 85 8E 25 CC 43 54 A0 FF 06 FC A3 0B 11 09
@@ -76,7 +82,3 @@ known by the server beforehand. The payload will look something like this:
 - `0x02` - Type (Authorize)
 - `0x0010` - Length (16)
 - `0xA1...09` - Data (UUID V4 in binary)
-
-If the server validates the token, response will contain a type of provision (`0x04`)
-with information. If the server is unable to validate the token the response
-will be of type Denied (`0xA`)
