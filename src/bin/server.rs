@@ -12,18 +12,19 @@ To-Do:
 - [ ] HTTP API for CLI
  */
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
+use std::{error, fmt};
 
 use tokio::net::{TcpListener, TcpStream};
 use uuid::Uuid;
 
-use rrmt_lib::frame::{read_frame, ReadErrorType, RRMTFrame, write_frame};
+use rrmt_lib::frame::{read_frame, write_frame, ErrorType, RRMTFrame, ReadError};
 use rrmt_lib::Result;
 
-type SharedTokenList = Arc<Mutex<HashSet<Uuid>>>;
-type SharedRemoteList = Arc<Mutex<HashMap<Uuid, bool>>>;
+type RemoteList = HashMap<Uuid, bool>;
+type SharedRemoteList = Arc<Mutex<RemoteList>>;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -32,72 +33,120 @@ async fn main() -> Result<()> {
     println!("RRMT Server is now listening at: {}", addr);
 
     let token = Uuid::from_str("c10afcef-0d32-4b6a-a870-54318fdcef18")?;
-    println!("UUID is {}", token);
 
-    let mut token_list = HashSet::new();
-    token_list.insert(token);
+    let mut remote_list = HashMap::new();
+    remote_list.insert(token, false);
 
-    let shared_token_list: SharedTokenList = Arc::new(Mutex::new(token_list));
-    let shared_remote_list: SharedRemoteList = Arc::new(Mutex::new(HashMap::new()));
+    let shared_remote_list: SharedRemoteList = Arc::new(Mutex::new(remote_list));
 
     loop {
         let (socket, _) = listener.accept().await?;
-        let shared_token_list = shared_token_list.clone();
         let shared_remote_list = shared_remote_list.clone();
 
         tokio::spawn(async move {
-            if let Err(e) = process(socket, shared_token_list, shared_remote_list).await {
+            if let Err(e) = process(socket, shared_remote_list).await {
                 println!("Failure: {}", e);
             }
         });
     }
 }
 
-async fn process(mut socket: TcpStream, shared_token_list: SharedTokenList, shared_remote_list: SharedRemoteList) -> Result<()> {
+async fn process(mut socket: TcpStream, shared_remote_list: SharedRemoteList) -> Result<()> {
+    let mut machine_id = Uuid::nil();
+
     loop {
         let frame = match read_frame(&mut socket).await {
             Ok(frame) => frame,
             Err(e) => {
-                match e.error_type {
-                    ReadErrorType::ClientError => {
-                        write_frame(&mut socket, RRMTFrame::Error(e.to_string())).await?;
+                match e {
+                    ReadError::ClientError(msg) => {
+                        write_frame(
+                            &mut socket,
+                            RRMTFrame::Error(ErrorType::FormatError, msg.to_string()),
+                        )
+                        .await?;
                         continue;
                     }
-                    ReadErrorType::ConnectionError => break
+
+                    ReadError::ConnectionError(msg) => {
+                        write_frame(
+                            &mut socket,
+                            RRMTFrame::Error(ErrorType::ServerError, msg.to_string()),
+                        )
+                        .await?;
+                        continue;
+                    }
+
+                    ReadError::LengthMismatch => {
+                        write_frame(
+                            &mut socket,
+                            RRMTFrame::Error(ErrorType::LengthMismatch, "".to_string()),
+                        )
+                        .await?;
+                        continue;
+                    }
+
+                    ReadError::SocketClosed => break,
                 };
             }
         };
 
         match frame {
             RRMTFrame::Authorize(uuid) => {
-                let mut token_list: HashSet<Uuid> = HashSet::new();
-                {
-                    match shared_token_list.lock() {
-                        Ok(shared_token_list) => shared_token_list.clone_into(&mut token_list),
-                        Err(_) => return Err("Token Mutex Poison".into()),
-                    };
+                if let Some(value) = get_remote_list(&shared_remote_list).await?.get(&uuid) {
+                    if !(*value) {
+                        insert_remote_list(&shared_remote_list, uuid, true).await?;
+                        machine_id = uuid;
+                        write_frame(&mut socket, RRMTFrame::Accepted).await?;
+                        println!("Device {} has joined.", uuid);
+                        continue;
+                    }
                 }
-
-                if token_list.contains(&uuid) {
-                    let uuid = Uuid::new_v4();
-                    let mut remote_list: HashMap<Uuid, bool> = HashMap::new();
-                    {
-                        match shared_remote_list.lock() {
-                            Ok(shared_remote_list) => shared_remote_list.clone_into(&mut remote_list),
-                            Err(_) => return Err("Remote Mutex Poison".into())
-                        };
-                    }    
-                    
-                    write_frame(&mut socket, RRMTFrame::Provision(uuid)).await?;
-                } else {
-                    write_frame(&mut socket, RRMTFrame::Denied("Invalid Token".to_string()))
-                        .await?;
-                }
-            },
+                write_frame(&mut socket, RRMTFrame::Denied).await?;
+            }
 
             _ => println!("Unhandled frame: {:?}", frame),
         };
     }
 
-    Err("Socket Broken".into())
+    if !machine_id.is_nil() {
+        insert_remote_list(&shared_remote_list, machine_id, false).await?;
+        println!("{} has left", machine_id);
+    }
+
+    Ok(())
+}
+
+#[derive(Debug, Clone)]
+pub struct MutexPoisonError;
+
+impl fmt::Display for MutexPoisonError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl error::Error for MutexPoisonError {}
+
+async fn get_remote_list(shared_remote_list: &SharedRemoteList) -> Result<RemoteList> {
+    let mut remote_list: RemoteList = HashMap::new();
+
+    match shared_remote_list.lock() {
+        Ok(shared_token_list) => shared_token_list.clone_into(&mut remote_list),
+        Err(_) => return Err(MutexPoisonError.into()),
+    }
+
+    Ok(remote_list)
+}
+
+async fn insert_remote_list(
+    shared_remote_list: &SharedRemoteList,
+    key: Uuid,
+    value: bool,
+) -> Result<()> {
+    match shared_remote_list.lock() {
+        Ok(mut shared_remote_list) => shared_remote_list.insert(key, value),
+        Err(_) => return Err(MutexPoisonError.into()),
+    };
+    Ok(())
 }

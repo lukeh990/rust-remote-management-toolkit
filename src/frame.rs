@@ -14,82 +14,84 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use uuid::Uuid;
 
-use crate::Result;
+// Refer to README.md#Error Types
+#[derive(Debug)]
+pub enum ErrorType {
+    //0x01
+    LengthMismatch,
+    //0x02
+    ServerError,
+    //0x03,
+    FormatError,
+    //0x04
+    ExecuteError,
+}
+
+impl ErrorType {
+    pub fn as_byte(&self) -> u8 {
+        match self {
+            ErrorType::LengthMismatch => 0x01,
+            ErrorType::ServerError => 0x02,
+            ErrorType::FormatError => 0x03,
+            ErrorType::ExecuteError => 0x04,
+        }
+    }
+}
 
 // Refer to README.md#Frame Types
 #[derive(Debug)]
 pub enum RRMTFrame {
     // 0x01
-    ACK,
-    // 0x02
     Authorize(Uuid),
+    // 0x02
+    Denied,
     // 0x03
-    Revoke,
+    Accepted,
     // 0x04
-    Provision(Uuid),
-    // 0x05
     Ping,
-    // 0x06
+    // 0x05
     Pong,
+    // 0x06
+    Error(ErrorType, String),
     // 0x07
     Execute(String),
     // 0x08
     Result(String),
     // 0x09
-    Reauthorize(Uuid),
-    // 0x0A
-    Denied(String),
-    // 0x0B
-    Error(String),
+    ACK,
 }
 
 #[derive(Debug, Clone)]
-pub enum ReadErrorType {
-    ConnectionError,
-    ClientError,
-}
-
-#[derive(Debug, Clone)]
-pub struct ReadError {
-    pub error_type: ReadErrorType,
-    pub msg: &'static str,
-}
-
-impl ReadError {
-    fn new(error_type: ReadErrorType, msg: &'static str) -> ReadError {
-        ReadError { error_type, msg }
-    }
+pub enum ReadError {
+    ConnectionError(&'static str),
+    ClientError(&'static str),
+    SocketClosed,
+    LengthMismatch,
 }
 
 impl fmt::Display for ReadError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:?} | {}", self.error_type, self.msg)
+        write!(f, "{:?}", self)
     }
 }
 
 impl error::Error for ReadError {}
 
-pub async fn read_frame(stream: &mut TcpStream) -> std::result::Result<RRMTFrame, ReadError> {
+pub async fn read_frame(stream: &mut TcpStream) -> Result<RRMTFrame, ReadError> {
     let mut check_buf = [0; 1];
     let check = match stream.peek(&mut check_buf).await {
         Ok(check) => check,
         Err(_) => {
-            return Err(ReadError::new(
-                crate::frame::ReadErrorType::ConnectionError,
-                "Failed to check connection",
-            ));
+            return Err(ReadError::ConnectionError("Peek Check"));
         }
     };
     if check == 0 {
-        return Err(ReadError::new(crate::frame::ReadErrorType::ConnectionError, "Connection Closed"));
+        return Err(ReadError::SocketClosed);
     }
 
     let mut header_buf = [0; 3];
     if stream.read_exact(&mut header_buf).await.is_err() {
-        return Err(ReadError::new(
-            crate::frame::ReadErrorType::ConnectionError,
-            "Failed to read header bytes",
-        ));
+        return Err(ReadError::ConnectionError("Read Buf"));
     }
 
     let (rrmt_type_buf, rrmt_length_buf) = header_buf.split_at(1);
@@ -98,47 +100,63 @@ pub async fn read_frame(stream: &mut TcpStream) -> std::result::Result<RRMTFrame
 
     let mut rrmt_data_buf = vec![0; rrmt_length];
     if stream.read_exact(&mut rrmt_data_buf).await.is_err() {
-        return Err(ReadError::new(crate::frame::ReadErrorType::ConnectionError, "Failed to read payload"));
+        return Err(ReadError::LengthMismatch);
     }
 
     match rrmt_type_buf[0] {
-        0x01 => Ok(RRMTFrame::ACK),
-        0x02 => Ok(RRMTFrame::Authorize(uuid_from_buf(rrmt_data_buf).await?)),
-        0x03 => Ok(RRMTFrame::Revoke),
-        0x04 => Ok(RRMTFrame::Provision(uuid_from_buf(rrmt_data_buf).await?)),
-        0x05 => Ok(RRMTFrame::Ping),
-        0x06 => Ok(RRMTFrame::Pong),
+        0x01 => Ok(RRMTFrame::Authorize(uuid_from_buf(rrmt_data_buf).await?)),
+        0x02 => Ok(RRMTFrame::Denied),
+        0x03 => Ok(RRMTFrame::Accepted),
+        0x04 => Ok(RRMTFrame::Ping),
+        0x05 => Ok(RRMTFrame::Pong),
+        0x06 => Ok(RRMTFrame::Error(
+            error_type_from_buf(&mut rrmt_data_buf).await?,
+            string_from_buf(rrmt_data_buf).await?,
+        )),
         0x07 => Ok(RRMTFrame::Execute(string_from_buf(rrmt_data_buf).await?)),
         0x08 => Ok(RRMTFrame::Result(string_from_buf(rrmt_data_buf).await?)),
-        0x09 => Ok(RRMTFrame::Reauthorize(uuid_from_buf(rrmt_data_buf).await?)),
-        0x0A => Ok(RRMTFrame::Denied(string_from_buf(rrmt_data_buf).await?)),
-        0x0B => Ok(RRMTFrame::Error(string_from_buf(rrmt_data_buf).await?)),
-        _ => Err(ReadError::new(crate::frame::ReadErrorType::ClientError, "Invalid Connection Type")),
+        0x09 => Ok(RRMTFrame::ACK),
+        _ => Err(ReadError::ClientError("Header Not Supported")),
     }
 }
 
-pub async fn write_frame(stream: &mut TcpStream, frame: RRMTFrame) -> Result<()> {
+#[derive(Debug, Clone)]
+pub enum WriteError {
+    FrameTooBig,
+    ConnectionFailure,
+}
+
+impl fmt::Display for WriteError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl error::Error for WriteError {}
+
+pub async fn write_frame(stream: &mut TcpStream, frame: RRMTFrame) -> Result<(), WriteError> {
     let header: u8;
     let mut data: Vec<u8> = vec![];
 
     match frame {
-        RRMTFrame::ACK => header = 0x01,
-
         RRMTFrame::Authorize(uuid) => {
-            header = 0x02;
+            header = 0x01;
             data.extend_from_slice(uuid.as_bytes());
         }
 
-        RRMTFrame::Revoke => header = 0x03,
+        RRMTFrame::Denied => header = 0x02,
 
-        RRMTFrame::Provision(uuid) => {
-            header = 0x04;
-            data.extend_from_slice(uuid.as_bytes());
+        RRMTFrame::Accepted => header = 0x03,
+
+        RRMTFrame::Ping => header = 0x04,
+
+        RRMTFrame::Pong => header = 0x05,
+
+        RRMTFrame::Error(error_type, message) => {
+            header = 0x06;
+            data.push(error_type.as_byte());
+            data.extend_from_slice(message.as_bytes());
         }
-
-        RRMTFrame::Ping => header = 0x05,
-
-        RRMTFrame::Pong => header = 0x06,
 
         RRMTFrame::Execute(string) => {
             header = 0x07;
@@ -150,26 +168,13 @@ pub async fn write_frame(stream: &mut TcpStream, frame: RRMTFrame) -> Result<()>
             data.extend_from_slice(string.as_bytes());
         }
 
-        RRMTFrame::Reauthorize(uuid) => {
-            header = 0x09;
-            data.extend_from_slice(uuid.as_bytes());
-        }
-
-        RRMTFrame::Denied(string) => {
-            header = 0x0A;
-            data.extend_from_slice(string.as_bytes());
-        }
-
-        RRMTFrame::Error(string) => {
-            header = 0x0B;
-            data.extend_from_slice(string.as_bytes())
-        }
+        RRMTFrame::ACK => header = 0x09,
     }
 
     let length = data.len();
 
     if length > u16::MAX as usize {
-        return Err(format!("Frame exceeds size limit. Tried to send {} bytes", length).into());
+        return Err(WriteError::FrameTooBig);
     }
 
     let length = length as u16;
@@ -184,22 +189,36 @@ pub async fn write_frame(stream: &mut TcpStream, frame: RRMTFrame) -> Result<()>
 
     frame.append(&mut data);
 
-    stream.write_all(&frame).await?;
+    if stream.write_all(&frame).await.is_err() {
+        return Err(WriteError::ConnectionFailure);
+    }
 
     Ok(())
 }
 
-async fn uuid_from_buf(rrmt_data_buf: Vec<u8>) -> std::result::Result<Uuid, ReadError> {
+async fn uuid_from_buf(rrmt_data_buf: Vec<u8>) -> Result<Uuid, ReadError> {
     let bytes: [u8; 16] = match rrmt_data_buf.try_into() {
         Ok(bytes) => bytes,
-        Err(_) => return Err(ReadError::new(crate::frame::ReadErrorType::ClientError, "Invalid UUID Length")),
+        Err(_) => return Err(ReadError::ClientError("Bad UUID format")),
     };
     Ok(Uuid::from_bytes(bytes))
 }
 
-async fn string_from_buf(rrmt_data_buf: Vec<u8>) -> std::result::Result<String, ReadError> {
+async fn string_from_buf(rrmt_data_buf: Vec<u8>) -> Result<String, ReadError> {
     match String::from_utf8(rrmt_data_buf) {
         Ok(string) => Ok(string),
-        Err(_) => Err(ReadError::new(crate::frame::ReadErrorType::ClientError, "Failed to convert to string")),
+        Err(_) => Err(ReadError::ClientError("Bad String")),
     }
+}
+
+async fn error_type_from_buf(rrmt_data_buf: &mut Vec<u8>) -> Result<ErrorType, ReadError> {
+    let error_type = match rrmt_data_buf[0] {
+        0x01 => ErrorType::LengthMismatch,
+        0x02 => ErrorType::ServerError,
+        0x03 => ErrorType::FormatError,
+        0x04 => ErrorType::ExecuteError,
+        _ => return Err(ReadError::ClientError("Invalid error type")),
+    };
+    rrmt_data_buf.remove(0);
+    Ok(error_type)
 }
