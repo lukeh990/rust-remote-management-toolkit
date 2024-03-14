@@ -3,124 +3,98 @@ connection.rs
 This module provides a high level interface for interacting with the RRMT protocol.
 
 To-Do:
-- [ ] Handle
+- [ ] Read/Write threads
+- [ ] Connection API
+- [ ] Authorize with server
+- [ ] Respond to pings
+- [ ] Pass around packets
+- [ ] Handle network disconnects
  */
 
-use std::net::SocketAddr;
-use std::ops::MulAssign;
-use std::time::Duration;
-use std::{error, fmt};
-
 use tokio::net::TcpStream;
-use tokio::time::sleep;
-use uuid::Uuid;
+use tokio::sync::{mpsc, oneshot};
+use crate::frame::{ReadError, RRMTFrame, RRMTFrameType, RRMTRole};
 
-use crate::frame::{read_frame, write_frame, RRMTFrame};
+type Responder<T, E> = oneshot::Sender<Result<T, E>>;
 
-#[derive(Debug, Clone)]
-pub enum AuthorizationError {
-    AlreadyAuthorized,
-    InvalidToken,
-    TransmissionError(String),
+pub struct WriteCommandResponder {
+    oneshot: Responder<RRMTFrame, ReadError>,
+    expected_types: Vec<RRMTFrameType>
 }
 
-impl fmt::Display for AuthorizationError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let message = match self {
-            AuthorizationError::AlreadyAuthorized => "Already Authorized",
-            AuthorizationError::InvalidToken => "Token Invalid",
-            AuthorizationError::TransmissionError(msg) => msg,
-        };
-        write!(f, "{}", message)
+pub struct WriteCommand {
+    frame: RRMTFrame,
+    response: Option<WriteCommandResponder>
+}
+
+impl WriteCommand {
+    pub fn new(frame: RRMTFrame, response: Option<WriteCommandResponder>) -> WriteCommand {
+        WriteCommand {
+            frame,
+            response
+        }
     }
 }
 
-impl error::Error for AuthorizationError {}
-
-pub struct Connection {
-    stream: TcpStream,
-    authorized: bool,
-    pub machine_id: Uuid,
+pub struct ReadCommand {
+    expected_types: Vec<RRMTFrameType>,
+    response: Responder<RRMTFrame, ReadError>
 }
 
-impl Connection {
-    pub async fn new(addr: SocketAddr, machine_id: Uuid) -> crate::Result<Connection> {
-        let stream = establish_stream_backoff(addr).await?;
-        Ok(Connection {
-            stream,
-            authorized: false,
-            machine_id,
-        })
+impl ReadCommand {
+    pub fn new(expected_types: Vec<RRMTFrameType>, response: Responder<RRMTFrame, ReadError>) -> ReadCommand {
+        ReadCommand {
+            expected_types,
+            response
+        }
     }
+}
 
-    pub async fn authorize(&mut self) -> Result<(), AuthorizationError> {
-        if self.authorized {
-            return Err(AuthorizationError::AlreadyAuthorized);
-        }
-
-        if write_frame(&mut self.stream, RRMTFrame::Authorize(self.machine_id))
-            .await
-            .is_err()
-        {
-            return Err(AuthorizationError::TransmissionError(
-                "Send Failure".to_string(),
-            ));
-        }
-
-        match read_frame(&mut self.stream).await {
-            Ok(frame) => match frame {
-                RRMTFrame::Accepted => {
-                    self.authorized = true;
-                    Ok(())
+async fn spawn_managers(socket: TcpStream) {
+    let (mut read, mut write) = socket.into_split();
+    
+    let (write_tx, mut write_rx) = mpsc::channel::<WriteCommand>(10);
+    let (read_tx, mut read_rx) = mpsc::channel::<ReadCommand>(10);
+    
+    tokio::spawn(async move {
+        loop {
+            match RRMTFrame::read(&mut read).await {
+                Ok(frame) => {
+                    let recv = read_rx.try_recv();
+                    if let RRMTFrameType::Ping = frame.frame_type {
+                        let pong_frame = match RRMTFrame::new_pong(RRMTRole::Client) {
+                            Ok(frame) => frame,
+                            Err(_) => {println!("Failed to create pong frame"); continue;}
+                        };
+                        let _ = write_tx.send(WriteCommand::new(pong_frame, None)).await;
+                    };
+                },
+                Err(_) => {
+                    // Fix Immediately
+                    panic!("Failed to read frame.")
                 }
-
-                RRMTFrame::Denied => Err(AuthorizationError::InvalidToken),
-
-                RRMTFrame::Error(error_type, msg) => Err(AuthorizationError::TransmissionError(
-                    format!("{:?} | {}", error_type, msg),
-                )),
-
-                _ => Err(AuthorizationError::TransmissionError(
-                    "Invalid Response".to_string(),
-                )),
-            },
-            Err(error) => Err(AuthorizationError::TransmissionError(error.to_string())),
+            };
         }
-    }
-}
-
-#[derive(Debug, Clone)]
-struct EstablishStreamError;
-
-impl fmt::Display for EstablishStreamError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Failed to establish stream")
-    }
-}
-
-impl error::Error for EstablishStreamError {}
-
-async fn establish_stream_backoff(addr: SocketAddr) -> Result<TcpStream, EstablishStreamError> {
-    let mut backoff = Duration::from_millis(1000);
-    let mut i = 0;
-    loop {
-        sleep(backoff).await;
-        match TcpStream::connect(addr).await {
-            Ok(stream) => {
-                return Ok(stream);
-            }
-            Err(_) => {
-                if i >= 5 {
-                    return Err(EstablishStreamError);
+    });
+    
+    tokio::spawn(async move {
+        while let Some(recv) = write_rx.recv().await {
+            if let Err(_) = recv.frame.write(&mut write).await {
+                if let Some(resp) = recv.response {
+                    let _ = resp.oneshot.send(Err(ReadError::ReadFailure));
                 }
-                backoff.mul_assign(2);
-                println!(
-                    "Failed to connect retrying after {} seconds",
-                    backoff.as_secs()
-                );
-                i += 1;
-                continue;
+            } else if let Some(resp) = recv.response {
+                let (read_resp_tx, read_resp_rx) = oneshot::channel::<Result<RRMTFrame, ReadError>>();
+                if read_tx.send(ReadCommand::new(resp.expected_types, read_resp_tx)).await.is_err() {
+                    let _ = resp.oneshot.send(Err(ReadError::ReadFailure));
+                    continue;
+                }
+                let read_resp = match read_resp_rx.await {
+                    Ok(reply) => reply,
+                    Err(_) => {let _ = resp.oneshot.send(Err(ReadError::ReadFailure)); continue;},
+                };
+                let _ = resp.oneshot.send(read_resp);
             }
-        };
-    }
-}
+        }
+    });
+} 

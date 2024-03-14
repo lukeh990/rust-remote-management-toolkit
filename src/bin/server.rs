@@ -20,7 +20,7 @@ use std::{error, fmt};
 use tokio::net::{TcpListener, TcpStream};
 use uuid::Uuid;
 
-use rrmt_lib::frame::{read_frame, write_frame, ErrorType, RRMTFrame, ReadError};
+use rrmt_lib::frame::{read_frame, write_frame, RRMTError, RRMTFrame, ReadError};
 use rrmt_lib::Result;
 
 type RemoteList = HashMap<Uuid, bool>;
@@ -54,15 +54,17 @@ async fn main() -> Result<()> {
 async fn process(mut socket: TcpStream, shared_remote_list: SharedRemoteList) -> Result<()> {
     let mut machine_id = Uuid::nil();
 
+    let (mut read, mut write) = socket.into_split();
+    
     loop {
-        let frame = match read_frame(&mut socket).await {
+        let frame = match read_frame(&mut read).await {
             Ok(frame) => frame,
             Err(e) => {
                 match e {
-                    ReadError::ClientError(msg) => {
+                    ReadError::PeerError(msg) => {
                         write_frame(
-                            &mut socket,
-                            RRMTFrame::Error(ErrorType::FormatError, msg.to_string()),
+                            &mut write,
+                            RRMTFrame::Error(RRMTError::FormatError, msg.to_string()),
                         )
                         .await?;
                         continue;
@@ -70,8 +72,8 @@ async fn process(mut socket: TcpStream, shared_remote_list: SharedRemoteList) ->
 
                     ReadError::ConnectionError(msg) => {
                         write_frame(
-                            &mut socket,
-                            RRMTFrame::Error(ErrorType::ServerError, msg.to_string()),
+                            &mut write,
+                            RRMTFrame::Error(RRMTError::ServerError, msg.to_string()),
                         )
                         .await?;
                         continue;
@@ -79,8 +81,8 @@ async fn process(mut socket: TcpStream, shared_remote_list: SharedRemoteList) ->
 
                     ReadError::LengthMismatch => {
                         write_frame(
-                            &mut socket,
-                            RRMTFrame::Error(ErrorType::LengthMismatch, "".to_string()),
+                            &mut write,
+                            RRMTFrame::Error(RRMTError::LengthMismatch, "".to_string()),
                         )
                         .await?;
                         continue;
@@ -97,17 +99,18 @@ async fn process(mut socket: TcpStream, shared_remote_list: SharedRemoteList) ->
                     if !(*value) {
                         insert_remote_list(&shared_remote_list, uuid, true).await?;
                         machine_id = uuid;
-                        write_frame(&mut socket, RRMTFrame::Accepted).await?;
+                        write_frame(&mut write, RRMTFrame::Accepted).await?;
                         println!("Device {} has joined.", uuid);
                         continue;
                     }
                 }
-                write_frame(&mut socket, RRMTFrame::Denied).await?;
+                write_frame(&mut write, RRMTFrame::Denied).await?;
             }
 
             _ => println!("Unhandled frame: {:?}", frame),
         };
     }
+    
 
     if !machine_id.is_nil() {
         insert_remote_list(&shared_remote_list, machine_id, false).await?;

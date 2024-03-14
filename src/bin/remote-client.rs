@@ -7,8 +7,6 @@ To-Do:
 - [X] Send frames between server and remote
 - [ ] Store persistent config
 - [ ] Authenticate with remote server
-- [ ] If already provisioned reauthenticate
-- [ ] Ping/Pong Cycle
 - [ ] Execute commands
  */
 

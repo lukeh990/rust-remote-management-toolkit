@@ -27,26 +27,26 @@ pub enum RRMTError {
     //0x01
     LengthMismatch,
     //0x02
-    ServerError(&'static str),
+    ServerError(String),
     //0x03,
     FormatError,
     //0x04
-    ExecuteError(&'static str),
+    ExecuteError(String),
 }
 
 impl AsData for RRMTError {
     fn as_data(&self) -> Vec<u8> {
-        let mut message: Option<&'static str> = None;
+        let mut message: Option<String> = None;
 
         let byte = match self {
             RRMTError::LengthMismatch => 0x01,
             RRMTError::ServerError(msg) => {
-                message = Some(msg);
+                message = Some(msg.clone());
                 0x02
             },
             RRMTError::FormatError => 0x03,
             RRMTError::ExecuteError(msg) => {
-                message = Some(msg);
+                message = Some(msg.clone());
                 0x03
             }
         };
@@ -151,8 +151,8 @@ impl error::Error for WriteError {}
 
 #[derive(Debug, Clone)]
 pub struct RRMTFrame {
-    frame_type: RRMTFrameType,
-    data: Option<Vec<u8>>
+    pub frame_type: RRMTFrameType,
+    pub data: Option<Vec<u8>>
 }
 
 
@@ -240,18 +240,10 @@ impl RRMTFrame {
     fn check_direction(role: RRMTRole, expected: RRMTFrameDirection) -> bool {
         match expected {
             RRMTFrameDirection::ServerToClient => {
-                if role == RRMTRole::Server {
-                    true
-                } else {
-                    false
-                }
+                role == RRMTRole::Server
             },
             RRMTFrameDirection::ClientToServer => {
-                if role == RRMTRole::Client {
-                    true
-                } else {
-                    false
-                }
+                role == RRMTRole::Client
             },
             RRMTFrameDirection::BiDirectional => true
         }
@@ -271,7 +263,7 @@ impl RRMTFrame {
             frame.append(&mut data);
         }
         
-        if write_half.write_all(&mut frame).await.is_err() {
+        if write_half.write_all(&frame).await.is_err() {
             return Err(WriteError::WriteFailure);
         }
         
@@ -358,22 +350,22 @@ pub fn data_to_string(data: Vec<u8>) -> Result<String, ConversionError> {
 }
 
 pub fn data_to_error(mut data: Vec<u8>) -> Result<RRMTError, ConversionError> {
-    let mut msg: &'static str = "";
-    let type_int = data[0].clone();
+    let mut message = String::new();
+    let type_int = data[0];
     data.remove(0);
     
     if data.len() > 1 {
-        msg = match String::from_utf8(data) {
-            Ok(msg) => &msg,
+        message = match String::from_utf8(data) {
+            Ok(msg) => msg,
             Err(_) => return Err(ConversionError)
-        }
+        };
     }
     
     match type_int {
         0x01 => Ok(RRMTError::LengthMismatch),
-        0x02 => Ok(RRMTError::ServerError(msg)),
+        0x02 => Ok(RRMTError::ServerError(message)),
         0x03 => Ok(RRMTError::FormatError),
-        0x04 => Ok(RRMTError::ExecuteError(msg)),
+        0x04 => Ok(RRMTError::ExecuteError(message)),
         _ => Err(ConversionError)
     }
 }
