@@ -41,6 +41,7 @@ on how to start the remote shell.
 
 - Type (1 Byte)
 - Length (2 Bytes) (Big Endian)
+- Conversation (1 Byte)
 
 #### Data
 
@@ -67,6 +68,14 @@ im use:
 - `0x02` - Server Error
 - `0x03` - Format Error
 - `0x04` - Execute Error
+- `0x05` - Not expecting message
+
+## Conversation Byte
+This byte indicates which process is expected to receive the packet.
+For example, when a client sends an authorization packet the conversation might be `0x02` and when the server responds
+it will contain the same conversation byte. To indicate to the client how to direct the message.
+
+The `0x01` conversation byte is reserved for the Ping/Pong cycle.
 
 ### Authorization Stage
 
