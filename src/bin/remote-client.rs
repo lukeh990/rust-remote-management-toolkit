@@ -3,40 +3,27 @@ remote-client.rs
 This file houses the remote client. It authenticates with the server and runs remote commands.
 
 To-Do:
-- [X] Connect to server
-- [X] Send frames between server and remote
-- [ ] Store persistent config
-- [ ] Authenticate with remote server
-- [ ] Execute commands
  */
 
+use std::error;
 use std::net::SocketAddr;
 use std::str::FromStr;
+use std::time::Duration;
 
-use uuid::Uuid;
+use tokio::net::TcpStream;
+use tokio::time::sleep;
 
-use rrmt_lib::connection::Connection;
-use rrmt_lib::Result;
+use rrmt_lib::flow_handler::{ConnectionType, FlowHandler};
 
 #[tokio::main]
-async fn main() -> Result<()> {
-    // Setup debug variable
-    /*    let mut debug = false;
-        #[cfg(debug_assertions)]
-        {
-            debug = true;
-        }
-    */
-
+async fn main() -> Result<(), Box<dyn error::Error>> {
     let addr = SocketAddr::from_str("127.0.0.1:3000")?;
-    let machine_id = Uuid::from_str("c10afcef-0d32-4b6a-a870-54318fdcef18")?;
 
-    let mut connection = Connection::new(addr, machine_id).await?;
+    let stream = TcpStream::connect(addr).await?;
 
-    match connection.authorize().await {
-        Ok(_) => println!("Authorized!"),
-        Err(e) => println!("{}", e),
+    let _flow_handler = FlowHandler::new(stream, ConnectionType::Client).await;
+
+    loop {
+        sleep(Duration::from_secs(1)).await;
     }
-
-    Ok(())
 }

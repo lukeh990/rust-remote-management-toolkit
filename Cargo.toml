@@ -10,7 +10,8 @@ name = "rrmt_lib"
 path = "src/lib.rs"
 
 [dependencies]
-tokio = { version = "1.36", features = ["full"] }
-bytes = "1.5"
-uuid = { version = "1.7", features = ["v4"] }
+tokio = { version = "1.38", features = ["full"] }
+bytes = "1.6"
+uuid = { version = "1.8", features = ["v4"] }
 byteorder = "1.5"
+chrono = "0.4.38"
