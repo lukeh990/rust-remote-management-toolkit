@@ -6,12 +6,15 @@ To-Do:
  */
 
 use std::error;
+use std::time::Duration;
+
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::mpsc;
-use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::time::sleep;
+
+use rrmt_lib::flow_handler::{ConnectionType, FlowHandler};
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn error>> {
+async fn main() -> Result<(), Box<dyn error::Error>> {
     let addr = "0.0.0.0:3000";
     let listener = TcpListener::bind(addr).await?;
     println!("RRMT Server is now listening at: {}", addr);
@@ -19,27 +22,18 @@ async fn main() -> Result<(), Box<dyn error>> {
     loop {
         let (socket, _) = listener.accept().await?;
 
+        // For every new connection run the handle_new_socket function
         tokio::spawn(async move {
-            if let Err(e) = handle_new_socket(socket).await {
-                println!("Failure: {}", e);
-            }
+            handle_new_socket(socket).await;
         });
     }
 }
 
 async fn handle_new_socket(socket: TcpStream) {
-    let flow_handler = FlowHandler::new(socket).await;
-}
+    // Create flow handler
+    let _flow_handler = FlowHandler::new(socket, ConnectionType::Server).await;
 
-struct FlowHandler {
-    handler_cmd: Sender<>
-}
-
-impl FlowHandler {
-    async fn new(socket: TcpStream) -> FlowHandler {
-        let (tx, mut rx) = mpsc::channel(32);
-        FlowHandler {
-            handler_cmd: tx
-        }
+    loop {
+        sleep(Duration::from_secs(1)).await;
     }
 }

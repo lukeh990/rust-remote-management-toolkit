@@ -14,10 +14,16 @@ management server, which will in turn forward that again to the Administrator
 See diagram:  
 ![System Diagram](static/diagram.png?)
 
+## Project Status
+
+**2024-06-24**
+
+Got a basic ping/pong cycle working with a framework for multithreaded communication.
+
 ## Tasks
 
-- [ ] Design RRMT Protocol
-- [ ] Implement RRMT Protocol
+- [/] Design RRMT Protocol
+- [/] Implement RRMT Protocol
 - [ ] Authentication
 - [ ] Provisioning
 - [ ] Maintaining Connection
@@ -42,18 +48,25 @@ on how to start the remote shell.
 - Version (1 Byte)
 - Type (1 Byte)
 - Flow (1 Byte)
-- Length (2 Bytes) (Big Endian)
+- Data Length (2 Bytes) (Big Endian)
+
+##### Types
+
+- 0x00 - Heartbeat
 
 #### Data
 
-Data can range from 0 bytes to 65,535. 
+Data can range from 0 bytes to 65,535.
 
-As soon as the 5 bytes that make up the header have been sent the data follows. The length of the data must be exactly as
-defined by the length attribute of the header. If it is not an exact match the receiver must treat the transmission as 
+As soon as the 5 bytes that make up the header have been sent the data follows. The length of the data must be exactly
+as
+defined by the length attribute of the header. If it is not an exact match the receiver must treat the transmission as
 malformed.
 
 ### Dealing with Multiple Threads
-As the server and client are designed to handle multiple asynchronous tasks a problem arises when data arrives for different
+
+As the server and client are designed to handle multiple asynchronous tasks a problem arises when data arrives for
+different
 tasks at the same time. The solution is to assign one thread to for each stream to record the flow byte on outgoing
 transmissions and to ensure returning data is delivered to the right task.
 
@@ -64,3 +77,9 @@ The remaining are to be divided as follows:
 80 - FF | Server
 
 This is to prevent an accidental collision of the flow bytes.
+
+### Heartbeat Cycle
+
+In order to keep the TCP connection open and to ensure availability the remote system will send a heartbeat transmission
+with no data to the server if the connection does not experience any activity for 10 seconds. The server will reply with
+an identical transmission. If either party fails to reply the connection will be considered dead and closed.
